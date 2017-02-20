@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<seelog>
+    <outputs formatid="main">
+      <filter levels="info,debug,critical,error">
+        <rollingfile type="date" filename="logs/agent_notify.log" datepattern="02.01.2006" maxrolls="7"/>
+      </filter>
+    </outputs>
+    <formats>
+        <format id="main" format="%Date/%Time %File:%Line [%LEV] %Msg%n"/>
+    </formats>
+</seelog>
