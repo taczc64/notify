@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/cihub/seelog"
+	"notify/rpc"
 	"os"
+	"strconv"
 )
 
 type node struct {
@@ -18,7 +20,8 @@ type node struct {
 }
 
 type pools struct {
-	Nodes []node `json:"nodes"`
+	Timeout string `json:"timeout"`
+	Nodes   []node `json:"nodes"`
 }
 
 func loadNodes(config *pools) {
@@ -38,8 +41,17 @@ func loadNodes(config *pools) {
 	}
 }
 
-func listenNode(conf node, notify chan int) {
-	notify <- 1
+func miningClient(conf node, timeout string, notify chan int) {
+	if conf.Enable {
+		url := "http://" + conf.Host + ":" + strconv.Itoa(int(conf.Port))
+		seelog.Info("url:", url)
+		r := rpc.NewRPCClient(url, timeout)
+
+		r.Subscribe()
+		// extraNonce1, extraNonce2 := r.Subscribe()
+		// seelog.Info("ext1, ext2:", extraNonce1, extraNonce2)
+		// r.Authorize(conf.WorkerName, conf.WorkerPassword)
+	}
 }
 
 func main() {
@@ -65,7 +77,7 @@ func main() {
 	//start
 	notify := make(chan int, 1)
 	for i := 0; i < len(nodes.Nodes); i++ {
-		go listenNode(nodes.Nodes[i], notify)
+		go miningClient(nodes.Nodes[i], nodes.Timeout, notify)
 	}
 
 	for {
