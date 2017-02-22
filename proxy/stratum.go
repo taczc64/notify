@@ -49,6 +49,7 @@ func MiningClient(conf node, timeout string, notify chan int) {
 		}
 		defer conn.Close()
 		sendSubscribe(&conn)
+		authorize(&conn, conf.WorkerName, conf.WorkerPassword)
 	}
 }
 
@@ -60,6 +61,27 @@ func sendSubscribe(conn *net.Conn) {
 	params := []byte(`{"method": "subscribe"}`)
 
 	req := JSONRpcReq{Id: (*json.RawMessage)(&id), Method: "mining.subscribe", Params: (*json.RawMessage)(&params)}
+	err := enc.Encode(&req)
+	if err != nil {
+		seelog.Error("send reqeust error:", err)
+	}
+	fmt.Println("send over")
+	connbuf := bufio.NewReaderSize(*conn, 128)
+	data, _, err := connbuf.ReadLine()
+	if err != nil {
+		seelog.Error("get response error:", err)
+	}
+	seelog.Info("data :", string(data), "data len:", len(data))
+}
+
+func authorize(conn *net.Conn, worker, pwd string) {
+	enc := json.NewEncoder(*conn)
+
+	id := []byte(string(strconv.Itoa(1)))
+	// params := []byte(`{"Params":""}`)
+	params := []byte(`{"method": "subscribe"}`)
+
+	req := JSONRpcReq{Id: (*json.RawMessage)(&id), Method: "mining.authorize", Params: (*json.RawMessage)(&params)}
 	err := enc.Encode(&req)
 	if err != nil {
 		seelog.Error("send reqeust error:", err)
