@@ -4,27 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/cihub/seelog"
-	"notify/rpc"
+	"notify/proxy"
 	"os"
-	"strconv"
 )
 
-type node struct {
-	Name           string `json:"name"`
-	Host           string `json:"host"`
-	Port           int32  `json:"port"`
-	WorkerName     string `json:"worker_name"`
-	WorkerPassword string `json:"worker_password"`
-	Enable         bool   `json:"enable"`
-	Debug          bool   `json:"debug"`
-}
-
-type pools struct {
-	Timeout string `json:"timeout"`
-	Nodes   []node `json:"nodes"`
-}
-
-func loadNodes(config *pools) {
+func loadNodes(config *proxy.Pools) {
 	filename := "nodes.json"
 	seelog.Info("loading nodes file:", filename)
 	file, err := os.Open(filename)
@@ -38,19 +22,6 @@ func loadNodes(config *pools) {
 	if err := jsonParse.Decode(&config); err != nil {
 		seelog.Critical("Config error: ", err.Error())
 		panic(err.Error())
-	}
-}
-
-func miningClient(conf node, timeout string, notify chan int) {
-	if conf.Enable {
-		url := "http://" + conf.Host + ":" + strconv.Itoa(int(conf.Port))
-		seelog.Info("url:", url)
-		r := rpc.NewRPCClient(url, timeout)
-
-		r.Subscribe()
-		// extraNonce1, extraNonce2 := r.Subscribe()
-		// seelog.Info("ext1, ext2:", extraNonce1, extraNonce2)
-		// r.Authorize(conf.WorkerName, conf.WorkerPassword)
 	}
 }
 
@@ -71,14 +42,14 @@ func main() {
 	defer seelog.Flush()
 
 	//load all node message
-	nodes := pools{}
+	nodes := proxy.Pools{}
 	loadNodes(&nodes)
 
 	//start
 	notify := make(chan int, 1)
-	for i := 0; i < len(nodes.Nodes); i++ {
-		go miningClient(nodes.Nodes[i], nodes.Timeout, notify)
-	}
+	// for i := 0; i < len(nodes.Nodes); i++ {
+	go proxy.MiningClient(nodes.Nodes[0], nodes.Timeout, notify)
+	// }
 
 	for {
 		select {
