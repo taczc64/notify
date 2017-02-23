@@ -3,11 +3,16 @@ package proxy
 import (
 	"bufio"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"github.com/cihub/seelog"
 	"net"
 	"strconv"
 )
+
+type BlockInfo struct {
+	Height     int
+	Difficulty string
+}
 
 type node struct {
 	Name           string `json:"name"`
@@ -30,14 +35,25 @@ type JSONRpcReq struct {
 	Params *json.RawMessage `json:"params"`
 }
 
-type JSONRpcResp struct {
-	Id      *json.RawMessage `json:"id"`
-	Version string           `json:"jsonrpc"`
-	Result  interface{}      `json:"result"`
-	Error   interface{}      `json:"error,omitempty"`
+type Req struct {
+	Id     int      `json:"id"`
+	Method string   `json:"method"`
+	Params []string `json:"params"`
 }
 
-func MiningClient(conf node, timeout string, notify chan int) {
+type Resp struct {
+	Id     int         `json:"id"`
+	Result interface{} `json:"result"`
+	Error  interface{} `json:"error,omitempty"`
+}
+
+type Resdata struct {
+	Id     interface{}   `json:"id"`
+	Method string        `json:"method"`
+	Params []interface{} `json:"params"`
+}
+
+func MiningClient(conf node, timeout string, notify *chan BlockInfo) {
 	if conf.Enable {
 		seelog.Info("begin to dial node:", conf.Name)
 		addr := conf.Host + ":" + strconv.Itoa(int(conf.Port))
@@ -46,51 +62,104 @@ func MiningClient(conf node, timeout string, notify chan int) {
 			seelog.Error("cannot connect to pool:", conf.Name)
 			//TODO
 			//reconnect
+			return
 		}
 		defer conn.Close()
-		sendSubscribe(&conn)
-		authorize(&conn, conf.WorkerName, conf.WorkerPassword)
+		err = sendSubscribe(&conn)
+		if err != nil {
+			seelog.Info("exiting from routine connect to pool:", conf.Name)
+			return
+		}
+		sendAuthorize(&conn, conf.WorkerName, conf.WorkerPassword, notify, conf.Name)
 	}
 }
 
-func sendSubscribe(conn *net.Conn) {
+func sendSubscribe(conn *net.Conn) error {
 	enc := json.NewEncoder(*conn)
 
 	id := []byte(string(strconv.Itoa(1)))
-	// params := []byte(`{"Params":""}`)
-	params := []byte(`{"method": "subscribe"}`)
+	params, _ := json.Marshal(map[string]interface{}{"params": ""})
 
 	req := JSONRpcReq{Id: (*json.RawMessage)(&id), Method: "mining.subscribe", Params: (*json.RawMessage)(&params)}
 	err := enc.Encode(&req)
 	if err != nil {
 		seelog.Error("send reqeust error:", err)
 	}
-	fmt.Println("send over")
 	connbuf := bufio.NewReaderSize(*conn, 128)
 	data, _, err := connbuf.ReadLine()
 	if err != nil {
 		seelog.Error("get response error:", err)
 	}
-	seelog.Info("data :", string(data), "data len:", len(data))
+	resp := Resp{}
+	json.Unmarshal(data, &resp)
+	if resp.Error != nil {
+		seelog.Error("send subscribe error, resp:", string(data))
+		return errors.New(string(data))
+	}
+	return nil
 }
 
-func authorize(conn *net.Conn, worker, pwd string) {
+func sendAuthorize(conn *net.Conn, worker, pwd string, notify *chan BlockInfo, nodename string) {
 	enc := json.NewEncoder(*conn)
 
-	id := []byte(string(strconv.Itoa(1)))
-	// params := []byte(`{"Params":""}`)
-	params := []byte(`{"method": "subscribe"}`)
+	// id, _ := json.Marshal(map[string]interface{}{"id": 2})
 
-	req := JSONRpcReq{Id: (*json.RawMessage)(&id), Method: "mining.authorize", Params: (*json.RawMessage)(&params)}
+	req := Req{Id: 2, Method: "mining.authorize", Params: []string{worker, pwd}}
 	err := enc.Encode(&req)
 	if err != nil {
 		seelog.Error("send reqeust error:", err)
 	}
-	fmt.Println("send over")
-	connbuf := bufio.NewReaderSize(*conn, 128)
+	connbuf := bufio.NewReaderSize(*conn, 2048)
+
 	data, _, err := connbuf.ReadLine()
 	if err != nil {
 		seelog.Error("get response error:", err)
 	}
-	seelog.Info("data :", string(data), "data len:", len(data))
+
+	resp := Resp{}
+	json.Unmarshal(data, &resp)
+	if resp.Error != nil {
+		seelog.Info("authorize from node error:", resp.Error)
+		//TODO routine will exit, add reconnect module
+		return
+	}
+
+	resdata := Resdata{}
+	for {
+		data, _, err = connbuf.ReadLine()
+		if err != nil {
+			seelog.Error("get response error:", err)
+			//TODO reconnect
+			break
+		}
+		json.Unmarshal(data, &resdata)
+		if resdata.Method == "mining.notify" {
+			handleNotify(resdata.Params, notify)
+			seelog.Info("new block found by:", nodename)
+		} else if resdata.Method == "mining.set_difficulty" {
+			// TODO
+		}
+	}
+}
+
+func handleNotify(params []interface{}, notify *chan BlockInfo) {
+	if value, ok := params[2].(string); ok {
+		hash := []byte(value)
+		h := "0x" + string(hash[84:86]) //十六进制
+		blockHeightWei, _ := strconv.ParseInt(h, 0, 4)
+		height := hash[86:(86 + int(blockHeightWei)*2)]
+		newslice := convert(height)
+		newh := "0x" + string(newslice)
+		blockheight, _ := strconv.ParseInt(newh, 0, 32)
+		*notify <- BlockInfo{Height: int(blockheight)}
+	}
+}
+
+func convert(data []byte) []byte {
+	num := len(data) / 2 //slice对数目
+	newSlice := make([]byte, 0, len(data))
+	for i := 1; i < num+1; i++ {
+		newSlice = append(newSlice, data[len(data)-i*2:len(data)-i*2+2]...)
+	}
+	return newSlice
 }

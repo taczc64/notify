@@ -6,6 +6,7 @@ import (
 	"github.com/cihub/seelog"
 	"notify/proxy"
 	"os"
+	// "sync"
 )
 
 func loadNodes(config *proxy.Pools) {
@@ -46,15 +47,21 @@ func main() {
 	loadNodes(&nodes)
 
 	//start
-	notify := make(chan int, 1)
-	// for i := 0; i < len(nodes.Nodes); i++ {
-	go proxy.MiningClient(nodes.Nodes[0], nodes.Timeout, notify)
-	// }
+	notify := make(chan proxy.BlockInfo, 32)
+	for i := 0; i < len(nodes.Nodes); i++ {
+		go proxy.MiningClient(nodes.Nodes[i], nodes.Timeout, &notify)
+	}
 
+	height := 0
 	for {
 		select {
-		case data := <-notify:
-			fmt.Println("data:", data)
+		case info := <-notify:
+			fmt.Println("main thread get block height from  node:", info.Height)
+			if info.Height > height {
+				height = info.Height
+				seelog.Info("change block height")
+				fmt.Println("change block!!!!!!")
+			}
 		}
 	}
 }
