@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"github.com/cihub/seelog"
 	"notify/proxy"
+	"notify/redis"
 	"os"
-	// "sync"
 )
 
-func loadNodes(config *proxy.Pools) {
-	filename := "nodes.json"
+func loadConfig(config *proxy.Config) {
+	filename := "config.json"
 	seelog.Info("loading nodes file:", filename)
 	file, err := os.Open(filename)
 	if err != nil {
@@ -43,24 +43,41 @@ func main() {
 	defer seelog.Flush()
 
 	//load all node message
-	nodes := proxy.Pools{}
-	loadNodes(&nodes)
+	config := proxy.Config{}
+	loadConfig(&config)
+
+	redisClient := redis.NewRedisClient(&config.Redis)
+	pong, err := redisClient.Ping().Result()
+	if err != nil {
+		seelog.Infof("Can't establish connection to redis: %v", err)
+	} else {
+		seelog.Infof("redis check reply: %v", pong)
+	}
 
 	//start
-	notify := make(chan proxy.BlockInfo, 32)
-	for i := 0; i < len(nodes.Nodes); i++ {
-		go proxy.MiningClient(nodes.Nodes[i], nodes.Timeout, &notify)
+	notify := make(chan redis.BlockInfo, 16)
+
+	for i := 0; i < len(config.Nodes); i++ {
+		go proxy.MiningClient(config.Nodes[i], config.Timeout, &notify)
 	}
 
 	height := 0
+	difficulty := ""
+
 	for {
 		select {
 		case info := <-notify:
-			fmt.Println("main thread get block height from  node:", info.Height)
+			if height == 0 {
+				height = info.Height - 1
+				difficulty = info.Difficulty
+			}
 			if info.Height > height {
+				if difficulty != info.Difficulty && (info.Height%2016) != 1 {
+					info.Difficulty = difficulty
+				}
+				//publish to redis
+				redis.Publish(redisClient, info)
 				height = info.Height
-				seelog.Info("change block height")
-				fmt.Println("change block!!!!!!")
 			}
 		}
 	}

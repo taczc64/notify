@@ -6,13 +6,9 @@ import (
 	"errors"
 	"github.com/cihub/seelog"
 	"net"
+	"notify/redis"
 	"strconv"
 )
-
-type BlockInfo struct {
-	Height     int
-	Difficulty string
-}
 
 type node struct {
 	Name           string `json:"name"`
@@ -24,9 +20,10 @@ type node struct {
 	Debug          bool   `json:"debug"`
 }
 
-type Pools struct {
-	Timeout string `json:"timeout"`
-	Nodes   []node `json:"nodes"`
+type Config struct {
+	Timeout string            `json:"timeout"`
+	Redis   redis.RedisConfig `json:"redis"`
+	Nodes   []node            `json:"nodes"`
 }
 
 type JSONRpcReq struct {
@@ -53,7 +50,7 @@ type Resdata struct {
 	Params []interface{} `json:"params"`
 }
 
-func MiningClient(conf node, timeout string, notify *chan BlockInfo) {
+func MiningClient(conf node, timeout string, notify *chan redis.BlockInfo) {
 	if conf.Enable {
 		seelog.Info("begin to dial node:", conf.Name)
 		addr := conf.Host + ":" + strconv.Itoa(int(conf.Port))
@@ -99,7 +96,7 @@ func sendSubscribe(conn *net.Conn) error {
 	return nil
 }
 
-func sendAuthorize(conn *net.Conn, worker, pwd string, notify *chan BlockInfo, nodename string) {
+func sendAuthorize(conn *net.Conn, worker, pwd string, notify *chan redis.BlockInfo, nodename string) {
 	enc := json.NewEncoder(*conn)
 
 	// id, _ := json.Marshal(map[string]interface{}{"id": 2})
@@ -124,6 +121,7 @@ func sendAuthorize(conn *net.Conn, worker, pwd string, notify *chan BlockInfo, n
 		return
 	}
 
+	lastntime := ""
 	resdata := Resdata{}
 	for {
 		data, _, err = connbuf.ReadLine()
@@ -134,7 +132,7 @@ func sendAuthorize(conn *net.Conn, worker, pwd string, notify *chan BlockInfo, n
 		}
 		json.Unmarshal(data, &resdata)
 		if resdata.Method == "mining.notify" {
-			handleNotify(resdata.Params, notify)
+			handleNotify(resdata.Params, &lastntime, notify)
 			seelog.Info("new block found by:", nodename)
 		} else if resdata.Method == "mining.set_difficulty" {
 			// TODO
@@ -142,16 +140,34 @@ func sendAuthorize(conn *net.Conn, worker, pwd string, notify *chan BlockInfo, n
 	}
 }
 
-func handleNotify(params []interface{}, notify *chan BlockInfo) {
-	if value, ok := params[2].(string); ok {
-		hash := []byte(value)
-		h := "0x" + string(hash[84:86]) //十六进制
-		blockHeightWei, _ := strconv.ParseInt(h, 0, 4)
-		height := hash[86:(86 + int(blockHeightWei)*2)]
-		newslice := convert(height)
-		newh := "0x" + string(newslice)
-		blockheight, _ := strconv.ParseInt(newh, 0, 32)
-		*notify <- BlockInfo{Height: int(blockheight)}
+func handleNotify(params []interface{}, lastntime *string, notify *chan redis.BlockInfo) {
+	var difficulty, prevhash, ntime string
+	var blockheight int64
+	if clean, ok := params[8].(bool); ok && clean == true {
+		if value, ok := params[2].(string); ok {
+			// get block height
+			hash := []byte(value)
+			h := "0x" + string(hash[84:86]) //十六进制
+			blockHeightWei, _ := strconv.ParseInt(h, 0, 4)
+			height := hash[86:(86 + int(blockHeightWei)*2)]
+			newslice := convert(height)
+			newh := "0x" + string(newslice)
+			blockheight, _ = strconv.ParseInt(newh, 0, 32)
+
+		}
+		//get difficulty , prev hash and Ntime
+		if value, ok := params[6].(string); ok {
+			difficulty = value
+		}
+		if value, ok := params[1].(string); ok {
+			prevhash = value
+		}
+		if value, ok := params[7].(string); ok {
+			ntime = value
+		}
+		*notify <- redis.BlockInfo{Prevhash: prevhash, Height: int(blockheight), Difficulty: difficulty, Ntime: ntime, Mintime: *lastntime}
+		//set last ntime
+		*lastntime = ntime
 	}
 }
 
