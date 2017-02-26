@@ -156,15 +156,9 @@ func handleNotify(params []interface{}, lastntime *string, notify *chan redis.Bl
 
 		}
 		//get difficulty , prev hash and Ntime
-		if value, ok := params[6].(string); ok {
-			difficulty = value
-		}
-		if value, ok := params[1].(string); ok {
-			prevhash = value
-		}
-		if value, ok := params[7].(string); ok {
-			ntime = value
-		}
+		difficulty = params[6].(string)
+		prevhash = params[1].(string)
+		ntime = params[7].(string)
 		*notify <- redis.BlockInfo{Prevhash: prevhash, Height: int(blockheight), Difficulty: difficulty, Ntime: ntime, Mintime: *lastntime}
 		//set last ntime
 		*lastntime = ntime
