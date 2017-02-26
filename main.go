@@ -70,6 +70,7 @@ func main() {
 			if height == 0 {
 				height = info.Height - 1
 				difficulty = info.Difficulty
+				continue
 			}
 			if info.Height > height {
 				if difficulty != info.Difficulty && (info.Height%2016) != 1 {
