@@ -3,11 +3,12 @@ package proxy
 import (
 	"bufio"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"github.com/cihub/seelog"
 	"net"
 	"notify/redis"
 	"strconv"
+	"time"
 )
 
 type node struct {
@@ -51,23 +52,36 @@ type Resdata struct {
 }
 
 func MiningClient(conf node, timeout string, notify *chan redis.BlockInfo) {
+	//recover
+	defer func() {
+		if rec := recover(); rec != nil {
+			fmt.Println("routine critical error:", rec)
+		}
+	}()
+
 	if conf.Enable {
-		seelog.Info("begin to dial node:", conf.Name)
-		addr := conf.Host + ":" + strconv.Itoa(int(conf.Port))
-		conn, err := net.Dial("tcp", addr)
+		value, err := time.ParseDuration(timeout)
 		if err != nil {
-			seelog.Error("cannot connect to pool:", conf.Name)
-			//TODO
-			//reconnect
-			return
+			panic(err)
 		}
-		defer conn.Close()
-		err = sendSubscribe(&conn)
-		if err != nil {
-			seelog.Info("exiting from routine connect to pool:", conf.Name)
-			return
+		for {
+			seelog.Info("begin to dial node:", conf.Name)
+			addr := conf.Host + ":" + strconv.Itoa(int(conf.Port))
+			conn, err := net.Dial("tcp", addr)
+			if err != nil {
+				seelog.Error("cannot connect to pool:", conf.Name)
+				time.Sleep(value)
+				continue
+			}
+			err = sendSubscribe(&conn)
+			if err != nil {
+				seelog.Errorf("error from node %s : %v", conf.Name, err)
+			}
+			sendAuthorize(&conn, conf.WorkerName, conf.WorkerPassword, notify, conf.Name)
+			conn.Close()
+			time.Sleep(value)
+			seelog.Infof("redial %s will be happen in %s.", conf.Name, timeout)
 		}
-		sendAuthorize(&conn, conf.WorkerName, conf.WorkerPassword, notify, conf.Name)
 	}
 }
 
@@ -80,20 +94,20 @@ func sendSubscribe(conn *net.Conn) error {
 	req := JSONRpcReq{Id: (*json.RawMessage)(&id), Method: "mining.subscribe", Params: (*json.RawMessage)(&params)}
 	err := enc.Encode(&req)
 	if err != nil {
-		seelog.Error("send reqeust error:", err)
+		return err
 	}
 	connbuf := bufio.NewReaderSize(*conn, 128)
 	data, _, err := connbuf.ReadLine()
 	if err != nil {
-		seelog.Error("get response error:", err)
+		return err
 	}
 	resp := Resp{}
 	json.Unmarshal(data, &resp)
 	if resp.Error != nil {
 		seelog.Error("send subscribe error, resp:", string(data))
-		return errors.New(string(data))
+		return err
 	}
-	return nil
+	return err
 }
 
 func sendAuthorize(conn *net.Conn, worker, pwd string, notify *chan redis.BlockInfo, nodename string) {
@@ -104,21 +118,20 @@ func sendAuthorize(conn *net.Conn, worker, pwd string, notify *chan redis.BlockI
 	req := Req{Id: 2, Method: "mining.authorize", Params: []string{worker, pwd}}
 	err := enc.Encode(&req)
 	if err != nil {
-		seelog.Error("send reqeust error:", err)
+		seelog.Errorf("send reqeust to %s error: %v", nodename, err)
+		return
 	}
 	connbuf := bufio.NewReaderSize(*conn, 2048)
 
 	data, _, err := connbuf.ReadLine()
 	if err != nil {
-		seelog.Error("get response error:", err)
+		seelog.Errorf("get response from %s error: %v", nodename, err)
 	}
 
 	resp := Resp{}
 	json.Unmarshal(data, &resp)
 	if resp.Error != nil {
-		seelog.Info("authorize from node error:", resp.Error)
-		//TODO routine will exit, add reconnect module
-		return
+		seelog.Infof("authorize from node %s error: %v", nodename, resp.Error)
 	}
 
 	lastntime := ""
@@ -126,14 +139,16 @@ func sendAuthorize(conn *net.Conn, worker, pwd string, notify *chan redis.BlockI
 	for {
 		data, _, err = connbuf.ReadLine()
 		if err != nil {
-			seelog.Error("get response error:", err)
-			//TODO reconnect
+			seelog.Errorf("get response from %s error: %v", nodename, err)
 			break
 		}
-		json.Unmarshal(data, &resdata)
+		err = json.Unmarshal(data, &resdata)
+		if err != nil {
+			seelog.Error("Unmarshal authorize response error:", err)
+			break
+		}
 		if resdata.Method == "mining.notify" {
 			handleNotify(resdata.Params, &lastntime, notify)
-			seelog.Info("new block found by:", nodename)
 		} else if resdata.Method == "mining.set_difficulty" {
 			// TODO
 		}

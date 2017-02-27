@@ -60,7 +60,7 @@ func main() {
 	}
 
 	//start
-	notify := make(chan redis.BlockInfo, 16)
+	notify := make(chan redis.BlockInfo, 8)
 
 	for i := 0; i < len(config.Nodes); i++ {
 		go proxy.MiningClient(config.Nodes[i], config.Timeout, &notify)
