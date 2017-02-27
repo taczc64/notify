@@ -7,6 +7,7 @@ import (
 	"notify/proxy"
 	"notify/redis"
 	"os"
+	"runtime"
 )
 
 func loadConfig(config *proxy.Config) {
@@ -46,6 +47,10 @@ func main() {
 	config := proxy.Config{}
 	loadConfig(&config)
 
+	//use multi core if has, I set default 2, if have only 1 core, it will automatic change
+	runtime.GOMAXPROCS(2)
+	seelog.Info("running witch %d threads...", 2)
+
 	redisClient := redis.NewRedisClient(&config.Redis)
 	pong, err := redisClient.Ping().Result()
 	if err != nil {
@@ -72,7 +77,7 @@ func main() {
 				difficulty = info.Difficulty
 			}
 			if info.Height > height {
-				if difficulty != info.Difficulty && (info.Height%2016) != 1 {
+				if difficulty != info.Difficulty && (info.Height%2016) != 0 {
 					info.Difficulty = difficulty
 				}
 				//publish to redis
